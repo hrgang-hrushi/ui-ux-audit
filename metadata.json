@@ -1,0 +1,6 @@
+{
+  "name": "Aesthetic UI/UX Auditor",
+  "description": "A professional minimalist audit dashboard that analyzes website source code to detect AI-design patterns, improve typography, spacing, and polish, and generate optimized developer prompts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
