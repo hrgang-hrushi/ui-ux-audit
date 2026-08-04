@@ -82,6 +82,19 @@ async function startServer() {
       }
 
       const htmlContent = await response.text();
+
+      // Detect Vercel 404 HTML error pages even when returned with 200/404 status
+      if (
+        htmlContent.includes("The page could not be found") ||
+        htmlContent.includes("404: NOT_FOUND") ||
+        htmlContent.includes("Deployment Not Found")
+      ) {
+        return res.status(400).json({
+          error: "The Vercel deployment returned 'The page could not be found' (404). Check your deployment link or paste your HTML/JSX code directly into the sandbox below.",
+          status: 404,
+        });
+      }
+
       const cleanHtml = htmlContent.slice(0, 150000); // 150k limit
 
       return res.json({

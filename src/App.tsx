@@ -143,6 +143,41 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isLoading]);
 
+  // Helper to safely perform fetch and handle non-JSON / HTML error pages gracefully
+  const safeFetchJson = async (endpoint: string, payload: any) => {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        try {
+          const data = await res.json();
+          return { ok: res.ok, status: res.status, data };
+        } catch {
+          // JSON parse failed
+        }
+      }
+
+      const text = await res.text();
+      let errorMsg = "Unable to fetch content from URL.";
+      if (text.includes("The page could not be found") || text.includes("404")) {
+        errorMsg = "The URL returned 'The page could not be found' (404). Check your Vercel URL or paste HTML/JSX directly below.";
+      } else if (text.startsWith("The page") || text.includes("<!DOCTYPE") || text.includes("<html")) {
+        errorMsg = "The server returned an HTML response instead of JSON. Paste your HTML or JSX directly into the sandbox below.";
+      } else if (text) {
+        errorMsg = text.slice(0, 150);
+      }
+
+      return { ok: false, status: res.status, data: { error: errorMsg }, rawText: text };
+    } catch (e: any) {
+      return { ok: false, status: 0, data: { error: e?.message || "Network request failed" }, rawText: "" };
+    }
+  };
+
   // Fetch URL proxy action
   const handleFetchUrl = async () => {
     if (!url) {
@@ -152,27 +187,17 @@ export default function App() {
 
     setIsFetchingUrl(true);
     setFetchError(null);
-    try {
-      const res = await fetch("/api/fetch-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Unable to retrieve code. Check the URL or paste HTML manually below.");
-      }
+    const { ok, data } = await safeFetchJson("/api/fetch-url", { url });
+    setIsFetchingUrl(false);
 
+    if (ok && data?.html) {
       setPastedCode(data.html);
       setShowCodeInput(true);
-      // Clean error, alert success
       setFetchError(null);
-    } catch (err: any) {
-      setFetchError(err.message || "Failed to reach URL.");
-      setShowCodeInput(true); // Automatically expand code sandbox for direct pasting
-    } finally {
-      setIsFetchingUrl(false);
+    } else {
+      setFetchError(data?.error || "Failed to reach URL. Paste your HTML or JSX code directly into the sandbox below.");
+      setShowCodeInput(true);
     }
   };
 
@@ -189,46 +214,27 @@ export default function App() {
       // 1. If code is empty but URL is provided, try fetching it first
       let codeToAnalyze = pastedCode;
       if (!codeToAnalyze && url) {
-        try {
-          const fetchRes = await fetch("/api/fetch-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url }),
-          });
-          const fetchData = await fetchRes.json();
-          if (fetchRes.ok) {
-            codeToAnalyze = fetchData.html;
-            setPastedCode(fetchData.html);
-          } else {
-            setShowCodeInput(true);
-            throw new Error(fetchData.error || "Website URL unreachable. Paste your source code or HTML into the sandbox below.");
-          }
-        } catch (e: any) {
+        const { ok, data } = await safeFetchJson("/api/fetch-url", { url });
+        if (ok && data?.html) {
+          codeToAnalyze = data.html;
+          setPastedCode(data.html);
+        } else {
           setShowCodeInput(true);
-          throw e;
+          throw new Error(data?.error || "Website URL unreachable. Paste your source code or HTML into the sandbox below.");
         }
       }
 
-      // 2. Perform Audit locally (100% deterministic local engine, zero API key required)
+      // 2. Perform Audit (Try server endpoint or fallback to 100% client-side local analysis)
       let auditData: AuditResponse;
-      try {
-        const res = await fetch("/api/audit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url,
-            pastedCode: codeToAnalyze,
-            completionStage,
-          }),
-        });
+      const { ok, data } = await safeFetchJson("/api/audit", {
+        url,
+        pastedCode: codeToAnalyze,
+        completionStage,
+      });
 
-        if (res.ok) {
-          auditData = await res.json();
-        } else {
-          // Fallback to client-side local analysis if fetch fails
-          auditData = analyzeCodeLocally(codeToAnalyze || "", url || "", completionStage);
-        }
-      } catch {
+      if (ok && data?.categories) {
+        auditData = data as AuditResponse;
+      } else {
         // Fallback to client-side local analysis
         auditData = analyzeCodeLocally(codeToAnalyze || "", url || "", completionStage);
       }
